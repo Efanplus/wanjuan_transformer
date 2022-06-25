@@ -215,8 +215,8 @@ class BeamSearchScorer(BeamScorer):
         #print(__class__,"next_scores:", next_scores)
         #print(__class__,"next_tokens:", next_tokens, "shape:", next_tokens.shape)
         #print(__class__,"next_indices:", next_indices)
-        #print(__class__,"pad_token_id:", pad_token_id)
-        #print(__class__,"eos_token_id:", eos_token_id)
+        print(__class__,"pad_token_id:", pad_token_id)
+        print(__class__,"eos_token_id:", eos_token_id)
         #print(__class__,"self._done:", self._done)
         #print(__class__,"self.group_size:", self.group_size)
         cur_len = input_ids.shape[-1]
