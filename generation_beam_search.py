@@ -17,6 +17,8 @@ import warnings
 from abc import ABC, abstractmethod
 from collections import UserDict
 from typing import Optional, Tuple
+from transformers import AutoTokenizer
+import sys
 
 import torch
 
@@ -179,6 +181,7 @@ class BeamSearchScorer(BeamScorer):
         ]
         self._done = torch.tensor([False for _ in range(batch_size)], dtype=torch.bool, device=self.device)
 
+
         if not isinstance(num_beams, int) or num_beams <= 1:
             raise ValueError(
                 f"`num_beams` has to be an integer strictly greater than 1, but is {num_beams}. For `num_beams` == 1, one should make use of `greedy_search` instead."
@@ -210,18 +213,18 @@ class BeamSearchScorer(BeamScorer):
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
     ) -> Tuple[torch.Tensor]:
-        #print('\n\n\n',__class__,": process start" + '-'*100)
-        #print(__class__,"input_ids:", input_ids)
-        #print(__class__,"next_scores:", next_scores)
-        #print(__class__,"next_tokens:", next_tokens, "shape:", next_tokens.shape)
-        #print(__class__,"next_indices:", next_indices)
-        print(__class__,"pad_token_id:", pad_token_id)
-        print(__class__,"eos_token_id:", eos_token_id)
-        #print(__class__,"self._done:", self._done)
-        #print(__class__,"self.group_size:", self.group_size)
+        #print('\n\n\n',__class__.__name__, sys._getframe().f_lineno,": process start" + '-'*100)
+        #print(__class__.__name__, sys._getframe().f_lineno,"input_ids:", input_ids)
+        #print(__class__.__name__, sys._getframe().f_lineno,"next_scores:", next_scores)
+        #print(__class__.__name__, sys._getframe().f_lineno,"next_tokens:", next_tokens, "shape:", next_tokens.shape)
+        #print(__class__.__name__, sys._getframe().f_lineno,"next_indices:", next_indices)
+        # print(__class__.__name__, sys._getframe().f_lineno,"pad_token_id:", pad_token_id)
+        # print(__class__.__name__, sys._getframe().f_lineno,"eos_token_id:", eos_token_id)
+        #print(__class__.__name__, sys._getframe().f_lineno,"self._done:", self._done)
+        #print(__class__.__name__, sys._getframe().f_lineno,"self.group_size:", self.group_size)
         cur_len = input_ids.shape[-1]
-        #print(__class__,"cur_len:", cur_len)
-        #print(__class__,"before process _beam_hyps:", [ele.beams for ele in self._beam_hyps])
+        #print(__class__.__name__, sys._getframe().f_lineno,"cur_len:", cur_len)
+        #print(__class__.__name__, sys._getframe().f_lineno,"before process _beam_hyps:", [ele.beams for ele in self._beam_hyps])
         batch_size = len(self._beam_hyps)
         if not (batch_size == (input_ids.shape[0] // self.group_size)):
             if self.num_beam_groups > 1:
@@ -239,13 +242,13 @@ class BeamSearchScorer(BeamScorer):
         next_beam_scores = torch.zeros((batch_size, self.group_size), dtype=next_scores.dtype, device=device)
         next_beam_tokens = torch.zeros((batch_size, self.group_size), dtype=next_tokens.dtype, device=device)
         next_beam_indices = torch.zeros((batch_size, self.group_size), dtype=next_indices.dtype, device=device)
-        #print(__class__,"init next_beam_scores:", next_beam_scores)
-        #print(__class__,"init next_beam_tokens:", next_beam_tokens)
-        #print(__class__,"init next_beam_indices:", next_beam_indices)
+        #print(__class__.__name__, sys._getframe().f_lineno,"init next_beam_scores:", next_beam_scores)
+        #print(__class__.__name__, sys._getframe().f_lineno,"init next_beam_tokens:", next_beam_tokens)
+        #print(__class__.__name__, sys._getframe().f_lineno,"init next_beam_indices:", next_beam_indices)
 
         for batch_idx, beam_hyp in enumerate(self._beam_hyps):
-            #print(__class__,"cycle batch_idx:", batch_idx)
-            #print(__class__,"cycle beam_hyp.beams:", beam_hyp.beams)
+            #print(__class__.__name__, sys._getframe().f_lineno,"cycle batch_idx:", batch_idx)
+            #print(__class__.__name__, sys._getframe().f_lineno,"cycle beam_hyp.beams:", beam_hyp.beams)
             if self._done[batch_idx]:
                 if self.num_beams < len(beam_hyp):
                     raise ValueError(f"Batch can only be done if at least {self.num_beams} beams have been generated")
@@ -255,43 +258,43 @@ class BeamSearchScorer(BeamScorer):
                 next_beam_scores[batch_idx, :] = 0
                 next_beam_tokens[batch_idx, :] = pad_token_id
                 next_beam_indices[batch_idx, :] = 0
-                #print(__class__,"cycle change next_beam_scores:", next_beam_scores)
-                #print(__class__,"cycle change next_beam_tokens:", next_beam_tokens)
-                #print(__class__,"cycle change next_beam_indices:", next_beam_indices)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle change next_beam_scores:", next_beam_scores)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle change next_beam_tokens:", next_beam_tokens)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle change next_beam_indices:", next_beam_indices)
                 continue
             # next tokens for this sentence
             beam_idx = 0
             for beam_token_rank, (next_token, next_score, next_index) in enumerate(
                 zip(next_tokens[batch_idx], next_scores[batch_idx], next_indices[batch_idx])
             ):
-                #print(__class__,"cycle_cycle beam_token_rank:", beam_token_rank)
-                #print(__class__,"cycle_cycle next_token:", next_token)
-                # print(__class__,"cycle_cycle next_score:", next_score)
-                #print(__class__,"cycle_cycle next_index:", next_index)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle_cycle beam_token_rank:", beam_token_rank)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle_cycle next_token:", next_token)
+                # print(__class__.__name__, sys._getframe().f_lineno,"cycle_cycle next_score:", next_score)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle_cycle next_index:", next_index)
                 batch_beam_idx = batch_idx * self.group_size + next_index
-                #print(__class__,"cycle_cycle batch_beam_idx:", batch_beam_idx)
+                #print(__class__.__name__, sys._getframe().f_lineno,"cycle_cycle batch_beam_idx:", batch_beam_idx)
                 # add to generated hypotheses if end of sentence
                 if (eos_token_id is not None) and (next_token.item() == eos_token_id):
                     # if beam_token does not belong to top num_beams tokens, it should not be added
                     is_beam_token_worse_than_top_num_beams = beam_token_rank >= self.group_size
                     if is_beam_token_worse_than_top_num_beams:
                         continue
-                    #print(__class__, "cycle_cycle before add beam_hyp", beam_hyp.beams)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle_cycle before add beam_hyp", beam_hyp.beams)
                     beam_hyp.add(
                         input_ids[batch_beam_idx].clone(),
                         next_score.item(),
                     )
-                    #print(__class__, "cycle_cycle after add beam_hyp", beam_hyp.beams)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle_cycle after add beam_hyp", beam_hyp.beams)
                 else:
                     # add next predicted token since it is not eos_token
                     next_beam_scores[batch_idx, beam_idx] = next_score
                     next_beam_tokens[batch_idx, beam_idx] = next_token
                     next_beam_indices[batch_idx, beam_idx] = batch_beam_idx
                     beam_idx += 1
-                    #print(__class__, "cycle cycle change next_beam_scores:", next_beam_scores)
-                    #print(__class__, "cycle cycle change next_beam_tokens:", next_beam_tokens)
-                    #print(__class__, "cycle cycle change next_beam_indices:", next_beam_indices)
-                    #print(__class__, "cycle cycle change beam_idx:", beam_idx)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle cycle change next_beam_scores:", next_beam_scores)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle cycle change next_beam_tokens:", next_beam_tokens)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle cycle change next_beam_indices:", next_beam_indices)
+                    #print(__class__.__name__, sys._getframe().f_lineno, "cycle cycle change beam_idx:", beam_idx)
 
                 # once the beam for next step is full, don't add more tokens to it.
                 if beam_idx == self.group_size:
@@ -306,11 +309,11 @@ class BeamSearchScorer(BeamScorer):
             self._done[batch_idx] = self._done[batch_idx] or beam_hyp.is_done(
                 next_scores[batch_idx].max().item(), cur_len
             )
-            #print(__class__, "cycle change self._done:", self._done, "batch_idx:", batch_idx)
-        #print(__class__, "after process _beam_hyps:", [ele.beams for ele in self._beam_hyps])
-        #print(__class__, "return next_beam_scores:", next_beam_scores)
-        #print(__class__, "return next_beam_tokens:", next_beam_tokens)
-        #print(__class__, "return next_beam_indices:", next_beam_indices)
+            #print(__class__.__name__, sys._getframe().f_lineno, "cycle change self._done:", self._done, "batch_idx:", batch_idx)
+        #print(__class__.__name__, sys._getframe().f_lineno, "after process _beam_hyps:", [ele.beams for ele in self._beam_hyps])
+        #print(__class__.__name__, sys._getframe().f_lineno, "return next_beam_scores:", next_beam_scores)
+        #print(__class__.__name__, sys._getframe().f_lineno, "return next_beam_tokens:", next_beam_tokens)
+        #print(__class__.__name__, sys._getframe().f_lineno, "return next_beam_indices:", next_beam_indices)
         return UserDict(
             {
                 "next_beam_scores": next_beam_scores.view(-1),
@@ -393,6 +396,8 @@ class BeamHypotheses:
         self.num_beams = num_beams
         self.beams = []
         self.worst_score = 1e9
+        model_name = '/data1/zhangzheng/model/extract_triple_t5'
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def __len__(self):
         """
@@ -404,8 +409,9 @@ class BeamHypotheses:
         """
         Add a new hypothesis to the list.
         """
+        # print(__class__.__name__, sys._getframe().f_lineno, "add hyp:", hyp, "sum_logprobs:", sum_logprobs, self.tokenizer.batch_decode(hyp))
         score = sum_logprobs / (hyp.shape[-1] ** self.length_penalty)
-        #print(__class__,"add: hyp:{}, sum_logprobs: {}, add score: {}, hyp.shape[-1]: {}, self.length_penalty: {}".format(hyp, sum_logprobs, score, hyp.shape[-1], self.length_penalty))
+        #print(__class__.__name__, sys._getframe().f_lineno,"add: hyp:{}, sum_logprobs: {}, add score: {}, hyp.shape[-1]: {}, self.length_penalty: {}".format(hyp, sum_logprobs, score, hyp.shape[-1], self.length_penalty))
         if len(self) < self.num_beams or score > self.worst_score:
             self.beams.append((score, hyp))
             if len(self) > self.num_beams:

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import total_ordering
 import warnings
 import sys
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 from torch import nn
+import torch.nn.functional as F
 
 from .file_utils import ModelOutput
 from .generation_beam_search import BeamScorer, BeamSearchScorer
@@ -49,6 +51,8 @@ from .generation_stopping_criteria import (
     validate_stopping_criteria,
 )
 from .utils import logging
+
+from transformers import AutoTokenizer
 
 
 logger = logging.get_logger(__name__)
@@ -976,8 +980,8 @@ class GenerationMixin:
         >>> print("Generated:", tokenizer.decode(outputs[0], skip_special_tokens=True))
         ```"""
         # 1. Set generation parameters if not already defined
-        print(__class__.__name__, sys._getframe().f_lineno, "Generating...")
-        print(__class__.__name__, sys._getframe().f_lineno, "inputs: {}".format(inputs) )
+        # print(__class__.__name__, sys._getframe().f_lineno, "Generating...")
+        # print(__class__.__name__, sys._getframe().f_lineno, "inputs: {}".format(inputs) )
         bos_token_id = bos_token_id if bos_token_id is not None else self.config.bos_token_id
         num_beams = num_beams if num_beams is not None else self.config.num_beams
         length_penalty = length_penalty if length_penalty is not None else self.config.length_penalty
@@ -1851,6 +1855,8 @@ class GenerationMixin:
         ```"""
         # init values
         print(__class__.__name__, sys._getframe().f_lineno,"target_srcs:",target_srcs)
+        model_name = '/data1/zhangzheng/model/extract_triple_t5'
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
         if max_length is not None:
@@ -1900,7 +1906,8 @@ class GenerationMixin:
         beam_scores = beam_scores.view((batch_size * num_beams,))
 
         this_peer_finished = False  # used by synced_gpus only
-        print(__class__.__name__, sys._getframe().f_lineno, "debug target_srcs:", torch.cat([target_srcs[0], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[0])
+        target_base_index = []
+        beam_idx = None
         while True:
 
             if synced_gpus:
@@ -1925,78 +1932,98 @@ class GenerationMixin:
                 cur_len = cur_len + 1
                 continue  # don't waste resources running the code we don't need
             next_token_logits = outputs.logits[:, -1, :]
-            print(__class__.__name__, sys._getframe().f_lineno, " input_ids:", input_ids)
-            # target_index = []
-            # if input_ids[0].shape[0] > 2:
-            #     for j in range(batch_size):
-            #         for i in range(num_beams):
-            #             last_id = input_ids[j * num_beams + i][-1]
-            #             last_index = (target_srcs[j] == last_id).nonzero().view(-1)
-            #             print(__class__.__name__, sys._getframe().f_lineno, "last_id:",last_id, "last_index:", last_index)
-            #             if last_index.shape[0] > 0 and last_index[-1] == target_srcs[j].shape[0]:
-            #                 last_index = torch.index_select(last_index[:-1], 0, last_index)
-            #             last_index = torch.cat([last_index, special_tokens_ids, torch.tensor([1])])
-            #             target_index.append(last_index)
-            #     print(__class__.__name__, sys._getframe().f_lineno, "last_index", last_index)
-            # else:
-            #     for i in range(target_srcs.shape[0]):
-            #         target_index.append(torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i])
+
+            # print(__class__.__name__, sys._getframe().f_lineno, " target_srcs:", target_srcs, tokenizer.batch_decode(target_srcs))
+            # print(__class__.__name__, sys._getframe().f_lineno, " input_ids:", input_ids, tokenizer.batch_decode(input_ids))
             target_index = []
+            target_index_max_length = -1
+            # print(__class__.__name__, sys._getframe().f_lineno, " beam_idx:", beam_idx)
             if input_ids[0].shape[0] > 2:
                 for j in range(batch_size):
                     for i in range(num_beams):
-                        last_id = input_ids[j * num_beams + i][-1]
+                        idx = j * num_beams + i
+                        # new_idx = beam_idx[idx]
+                        last_id = input_ids[idx][-1]
                         last_index = (target_srcs[j] == last_id).nonzero().view(-1)
-                        print(__class__.__name__, sys._getframe().f_lineno, "last_id:",last_id, "last_index:", last_index)
+                        # print(__class__.__name__, sys._getframe().f_lineno, "last_id:",last_id, "last_index:", last_index)
                         if last_index.shape[0] > 0 and last_index[-1] == target_srcs[j].shape[0] - 1:
                             last_index = torch.index_select(last_index, 0, last_index[:-1])
                         if last_index.shape[0] > 0:
                             last_index += 1
-                            print(__class__.__name__, sys._getframe().f_lineno, "last_id: ",last_id, "last_index:", last_index)
-                            print(__class__.__name__, sys._getframe().f_lineno, "target_srcs[j]:", target_srcs[j])
+                            target_base_index.append(last_index)
+                            # print(__class__.__name__, sys._getframe().f_lineno, "last_id: ",last_id, "last_index:", last_index)
+                            # print(__class__.__name__, sys._getframe().f_lineno, "target_srcs[j]:", target_srcs[j])
                             last_index = torch.index_select(target_srcs[j], 0, last_index)
+                        else:
+                            target_base_index.append(None)
+                        # print(__class__.__name__, sys._getframe().f_lineno, "next_target_index", last_index, tokenizer.batch_decode(last_index))
                         target_index.append(torch.cat([last_index, special_tokens_ids]))
-                print(__class__.__name__, sys._getframe().f_lineno, "last_index", last_index)
+                        target_index_max_length = max(target_index_max_length, target_index[i].shape[0])
+            elif input_ids[0].shape[0] > 3:
+                for j in range(batch_size):
+                    for i in range(num_beams):
+                        idx = j * num_beams + i
+                        # target_base_index[idx] = target_base_index[beam_idx[idx]]
+                        if target_base_index[idx] is not None and target_base_index[idx].shape[0] > 0 and target_base_index[idx][-1] == target_srcs[j].shape[0] - 1:
+                            target_base_index[idx] = torch.index_select(target_base_index[idx], 0, target_base_index[idx][:-1])
+                        if target_base_index[idx] is None:
+                            target_index.append(special_tokens_ids)
+                            target_index_max_length = max(target_index_max_length, target_index[i].shape[0])
+                            continue
+                        # print(__class__.__name__, sys._getframe().f_lineno, "target_base_index[idx]:", target_base_index[idx], tokenizer.batch_decode(target_base_index[idx]))
+                        target_base_index[idx] += 1
+                        # print(__class__.__name__, sys._getframe().f_lineno, "target_base_index[idx]:", target_base_index[idx], tokenizer.batch_decode(target_base_index[idx]))
+                        last_index = torch.index_select(target_srcs[j], 0, target_base_index[idx].clone())
+                        # print(__class__.__name__, sys._getframe().f_lineno, "next_target_index", last_index, tokenizer.batch_decode(last_index))
+                        target_index.append(torch.cat([last_index, special_tokens_ids]))
+                        target_index_max_length = max(target_index_max_length, target_index[i].shape[0])
             else:
                 for i in range(batch_size):
-                    target_index.extend([torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i]] * num_beams)
+                    target_index_i = torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i]
+                    target_index.extend([torch.LongTensor(list(set(target_index_i.tolist())))]  * num_beams)
+                    target_index_max_length = max(target_index_max_length, target_index[i].shape[0])
+            # print(__class__.__name__, sys._getframe().f_lineno, "target_index:", tokenizer.batch_decode(target_index))
+            # print(__class__.__name__, sys._getframe().f_lineno, "target_base_index:", tokenizer.batch_decode(target_base_index))
 
             new_next_token_logits = []
-
-            for i in range(target_srcs.shape[0]):
-                index_select_tensor = torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i]
-                for j in range(num_beams):
-                    new_next_token_logits.append(torch.index_select(next_token_logits[i * num_beams + j], 0, index_select_tensor))
-            print(__class__.__name__, sys._getframe().f_lineno, "target_index, shape:", len(target_index), [ele.shape for ele in target_index])
-            # for target_index_i in range(len(target_index)):
-            #     # print(__class__.__name__, sys._getframe().f_lineno, "target_index_i:", target_index_i)
-            #     # print(__class__.__name__, sys._getframe().f_lineno, "next_token_logits[{}]:{}".format(target_index_i, next_token_logits[target_index_i]))
-            #     # print(__class__.__name__, sys._getframe().f_lineno, "target_index[{}]:{}".format(target_index_i, target_index[target_index_i]))
-            #     new_next_token_logits.append(torch.index_select(next_token_logits[target_index_i], 0, target_index[target_index_i]))
-            print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_logits:", new_next_token_logits)
+            min_score = -1e9
+            # target_index = []
+            # target_index_set = []
+            # for i in range(batch_size):
+            #     target_index.append(torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i])
+            #     target_index_set.append(torch.LongTensor(list(set(target_index[-1].tolist()))))
+            # for i in range(target_srcs.shape[0]):
+            #     for j in range(num_beams):
+            #         new_next_token_logits.append(torch.index_select(next_token_logits[i * num_beams + j], 0, target_index_set[i]))
+            # print(__class__.__name__, sys._getframe().f_lineno, "target_index, shape:", len(target_index), [ele.shape for ele in target_index])
+            for target_index_i in range(len(target_index)):
+                # print(__class__.__name__, sys._getframe().f_lineno, "target_index_i:", target_index_i)
+                # print(__class__.__name__, sys._getframe().f_lineno, "next_token_logits[{}]:{}".format(target_index_i, next_token_logits[target_index_i]))
+                # print(__class__.__name__, sys._getframe().f_lineno, "target_index[{}]:{}".format(target_index_i, target_index[target_index_i]))
+                base_next_token_logits = torch.index_select(next_token_logits[target_index_i], 0, target_index[target_index_i])
+                next_token_logits_i = F.pad(base_next_token_logits, (0, target_index_max_length - base_next_token_logits.shape[0]), mode='constant', value=min_score)
+                new_next_token_logits.append(next_token_logits_i)
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_logits:", new_next_token_logits)
             
             new_next_token_logits = torch.stack(new_next_token_logits, dim=0)
             # hack: adjust tokens for Marian. For Marian we have to make sure that the `pad_token_id`
             # cannot be generated both before and after the `nn.functional.log_softmax` operation.
-            next_token_logits = self.adjust_logits_during_generation(next_token_logits, cur_len=cur_len)
             new_next_token_logits = self.adjust_logits_during_generation(new_next_token_logits, cur_len=cur_len)
 
-            next_token_scores = nn.functional.log_softmax(
-                next_token_logits, dim=-1
-            )  # (batch_size * num_beams, vocab_size)
             new_next_token_scores = nn.functional.log_softmax(
                 new_next_token_logits, dim=-1
             )  # (batch_size * num_beams, vocab_size)
-            print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores", new_next_token_scores.max(),new_next_token_scores.min(),new_next_token_scores)
-            next_token_scores = logits_processor(input_ids, next_token_scores)
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores", new_next_token_scores.max(),new_next_token_scores.min(),new_next_token_scores)
             new_next_token_scores = logits_processor(input_ids, new_next_token_scores)
-            next_token_scores = next_token_scores + beam_scores[:, None].expand_as(next_token_scores)
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores", new_next_token_scores)
             new_next_token_scores = new_next_token_scores + beam_scores[:, None].expand_as(new_next_token_scores)
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores", new_next_token_scores)
+            # print(__class__.__name__, sys._getframe().f_lineno, "add beam_scores", beam_scores[:, None].expand_as(new_next_token_scores))
 
             # Store scores, attentions and hidden_states when required
             if return_dict_in_generate:
                 if output_scores:
-                    scores += (next_token_scores,)
+                    scores += (new_next_token_scores,)
                 if output_attentions:
                     decoder_attentions += (
                         (outputs.decoder_attentions,) if self.config.is_encoder_decoder else (outputs.attentions,)
@@ -2012,39 +2039,46 @@ class GenerationMixin:
                     )
 
             # reshape for beam search
-            vocab_size = next_token_scores.shape[-1]
             new_vocab_size = new_next_token_scores.shape[-1]
-            next_token_scores = next_token_scores.view(batch_size, num_beams * vocab_size)
             new_next_token_scores = new_next_token_scores.view(batch_size, num_beams * new_vocab_size)
-            next_token_scores, next_tokens = torch.topk(
-                next_token_scores, 2 * num_beams, dim=1, largest=True, sorted=True
-            )
-            print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores:", new_next_token_scores.shape, new_next_token_scores)
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores:", new_next_token_scores.shape, new_next_token_scores)
             new_next_token_scores, new_next_tokens = torch.topk(
                 new_next_token_scores, 2 * num_beams, dim=1, largest=True, sorted=True
             )
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_tokens:", new_next_tokens)
+            # print(__class__.__name__, sys._getframe().f_lineno, "target_index:", len(target_index), [ele.shape for ele in target_index], target_index, tokenizer.batch_decode(target_index, skip_special_tokens=True))
             new_next_indices = (new_next_tokens / new_vocab_size).long()
-            for i in range(target_srcs.shape[0]):
-                index_source = torch.cat([target_srcs[i], special_tokens_ids]) if special_tokens_ids is not None else target_srcs[i]
-                for j in range(new_next_tokens[i].shape[0]):
-                    new_next_tokens[i][j] = index_source[new_next_tokens[i][j] % index_source.shape[0]]
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_indices:", new_next_indices)
+            # for i in range(batch_size):
+            #     for j in range(new_next_tokens[i].shape[0]):
+            #         new_next_tokens[i][j] = target_index_set[i][new_next_tokens[i][j] % target_index_set[i].shape[0]]
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_tokens:", new_next_tokens)
             # print(__class__.__name__, sys._getframe().f_lineno, "target_index, shape:", len(target_index), [ele.shape for ele in target_index])
             # print(__class__.__name__, sys._getframe().f_lineno, "new_next_tokens, shape:{}, data: {}".format(new_next_tokens.shape, new_next_tokens) )
-            # for i in range(batch_size):
-            #     for j in range(num_beams):
-            #         # print(__class__.__name__, sys._getframe().f_lineno, i, j, batch_size, i * batch_size + j)
-            #         index_source = target_index[i * num_beams + j]
-            #         for k in [0, 1]:
-            #             new_next_tokens[i][j * 2 + k] = index_source[new_next_tokens[i][j * 2 + k] % index_source.shape[0]]
+            for i in range(batch_size):
+                for indice_i in range(len(new_next_indices[i])):
+                    new_next_tokens[i][indice_i] = target_index[i * num_beams + new_next_indices[i][indice_i]][new_next_tokens[i][indice_i] % target_index_max_length]
+                # for j in range(num_beams):
+                #     # print(__class__.__name__, sys._getframe().f_lineno, i, j, batch_size, i * batch_size + j)
+                #     index_source = target_index[i * num_beams + j]
+                #     print(__class__.__name__, sys._getframe().f_lineno, "index_source.shape:", index_source.shape)
+                #     for k in [0, 1]:
+                #         print(__class__.__name__, sys._getframe().f_lineno, "before new_next_tokens[i][j * 2 + k]:", new_next_tokens[i][j * 2 + k])
+                #         new_next_tokens[i][j * 2 + k] = index_source[new_next_tokens[i][j * 2 + k] % index_source.shape[0]]
+                #         print(__class__.__name__, sys._getframe().f_lineno, "after new_next_tokens[i][j * 2 + k]:", new_next_tokens[i][j * 2 + k])
             # print(__class__.__name__, sys._getframe().f_lineno, "new_next_tokens, shape:{}, data: {}".format(new_next_tokens.shape, new_next_tokens) )
 
-            next_indices = (next_tokens / vocab_size).long()
-            next_tokens = next_tokens % vocab_size
+            # next_indices = (next_tokens / vocab_size).long()
+            # next_tokens = next_tokens % vocab_size
 
-            new_next_tokens = new_next_tokens % vocab_size
-            
+            new_next_tokens = new_next_tokens % next_token_logits.shape[-1]            
             print(__class__.__name__, sys._getframe().f_lineno, "new next_indices", new_next_indices)
             print(__class__.__name__, sys._getframe().f_lineno, "new next_tokens", new_next_tokens)
+            for i in range(new_next_indices.shape[0]):
+                for j in range(new_next_indices[i].shape[0]):
+                    id_suanz = new_next_indices[i][j]
+                    print(__class__.__name__, sys._getframe().f_lineno, "add into beam info: ", input_ids[i * num_beams +id_suanz], tokenizer.batch_decode( input_ids[i * num_beams +id_suanz]), new_next_tokens[i][j], tokenizer.decode(new_next_tokens[i][j]), new_next_token_scores[i][j])
+            # print(__class__.__name__, sys._getframe().f_lineno, "new_next_token_scores", new_next_token_scores)
             # stateless
             beam_outputs = beam_scorer.process(
                 input_ids,
@@ -2057,8 +2091,15 @@ class GenerationMixin:
             beam_scores = beam_outputs["next_beam_scores"]
             beam_next_tokens = beam_outputs["next_beam_tokens"]
             beam_idx = beam_outputs["next_beam_indices"]
-
+            new_target_index = []
+            for i in range(len(beam_idx)):
+                new_target_index.append(target_index[beam_idx[i]])
+            target_index = new_target_index
+            # print(__class__.__name__, sys._getframe().f_lineno, "beam_next_tokens", beam_next_tokens)
+            # print(__class__.__name__, sys._getframe().f_lineno, "beam_idx", beam_idx)
+            # print(__class__.__name__, sys._getframe().f_lineno, "input_ids", input_ids)
             input_ids = torch.cat([input_ids[beam_idx, :], beam_next_tokens.unsqueeze(-1)], dim=-1)
+            # print(__class__.__name__, sys._getframe().f_lineno, "after input_ids", input_ids, tokenizer.batch_decode(input_ids))
 
             model_kwargs = self._update_model_kwargs_for_generation(
                 outputs, model_kwargs, is_encoder_decoder=self.config.is_encoder_decoder
@@ -2078,8 +2119,8 @@ class GenerationMixin:
         sequence_outputs = beam_scorer.finalize(
             input_ids,
             beam_scores,
-            next_tokens,
-            next_indices,
+            new_next_tokens,
+            new_next_indices,
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
             max_length=stopping_criteria.max_length,
