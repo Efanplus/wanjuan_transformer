@@ -180,7 +180,8 @@ class BeamSearchScorer(BeamScorer):
             for _ in range(batch_size)
         ]
         self._done = torch.tensor([False for _ in range(batch_size)], dtype=torch.bool, device=self.device)
-
+        model_name = '/data1/zhangzheng/model/extract_triple_t5'
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         if not isinstance(num_beams, int) or num_beams <= 1:
             raise ValueError(
@@ -333,7 +334,6 @@ class BeamSearchScorer(BeamScorer):
         eos_token_id: Optional[int] = None,
     ) -> Tuple[torch.LongTensor]:
         batch_size = len(self._beam_hyps)
-
         # finalize all open beam hypotheses and add to generated hypotheses
         for batch_idx, beam_hyp in enumerate(self._beam_hyps):
             if self._done[batch_idx]:
@@ -346,6 +346,12 @@ class BeamSearchScorer(BeamScorer):
                 final_score = final_beam_scores[batch_beam_idx].item()
                 final_tokens = input_ids[batch_beam_idx]
                 beam_hyp.add(final_tokens, final_score)
+        print(__class__.__name__, sys._getframe().f_lineno, "finalize:")
+        for beam_hyp in self._beam_hyps:
+            print(__class__.__name__, sys._getframe().f_lineno, "beam_hyp:")
+            for beam_hyp_ele in beam_hyp.beams:
+                print(__class__.__name__, sys._getframe().f_lineno, "ele:", beam_hyp_ele[0], self.tokenizer.batch_decode(beam_hyp_ele[1]))
+        print(__class__.__name__, sys._getframe().f_lineno, "_done:", self._done.shape, self._done)
 
         # select the best hypotheses
         sent_lengths = input_ids.new(batch_size * self.num_beam_hyps_to_keep)
